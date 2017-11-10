@@ -46,7 +46,7 @@ class ml2k17(object):
         self.epsilon=0.95;
         self.epsilonDecay=0.9995;
         self.epsilonMin=0.01;
-        self.batchSize=1000
+        self.batchSize=100
         self.trainStart=10
         self.memory=deque(maxlen=30000);
         self.model=self.buildModel();
@@ -57,13 +57,9 @@ class ml2k17(object):
 
     def buildModel(self):
         model=Sequential();
-        model.add(Dense(int(self.stateSize*1.2), input_dim=self.stateSize, activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.4), activation='relu',kernel_initializer='he_uniform'))
+        model.add(Dense(int(self.stateSize*1.3), input_dim=self.stateSize, activation='relu',kernel_initializer='he_uniform'))
         model.add(Dense(int(self.stateSize*1.6), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.8), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.6), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.4), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.2), activation='relu',kernel_initializer='he_uniform'))
+        model.add(Dense(int(self.stateSize*1.3), activation='relu',kernel_initializer='he_uniform'))
         model.add(Dense(self.actionSize, activation='linear',kernel_initializer='he_uniform'))
         #model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learningRate))
@@ -130,7 +126,7 @@ class ml2k17(object):
 
 class CellWar(object):
     def __init__(self):
-        self.numGames=1000;
+        self.numGames=100;
         # For statistics and achievement page purpose
         self.actionForNow=0;
         self.score=0;
@@ -176,57 +172,6 @@ class CellWar(object):
 
         self.mlPrevState=self.mlCurrState+0;
 
-
-    def saveLoad(self):
-        self.achievement = [self.gamesPlayed,self.loses,self.enemyKilled,\
-                         self.needleLeft,self.totalMerge,self.totalAssist]
-        outFile1 = open('myLevelCleared.txt','wb')
-        outFile2 = open('myAchievement.txt','wb')
-        pickle.dump(self.levelCleared,outFile1)
-############################ MAKE ACHIEVEMENT ###############################
-############################ HIGH SCORE?? ###############################
-        pickle.dump(self.achievement,outFile2)
-        outFile1.close()
-        outFile2.close()
-
-    def readFile(self):
-        inFile1 = open('myLevelCleared.txt','rb')
-        inFile2 = open('myAchievement.txt','rb')
-        self.levelCleared = pickle.load(inFile1)
-        self.achievement = pickle.load(inFile2)
-        [self.gamesPlayed,self.loses,self.enemyKilled,self.needleLeft,\
-         self.totalMerge,self.totalAssist] = self.achievement
-
-    ###################################################
-    # SAVE AND LOAD PREVIOUS RECORD! IMPORTANT!
-    ###################################################
-    '''
-    def mousePressed(self,event):
-
-        if self.mode == "Running" or self.mode == "Tutorial":
-            self.recordPos = None # refresh everytime with NEW click
-            needlex,needley,imagex,imagey = 647,643,700,700
-            x,y = self.mousePos
-            if self.needleMode: # mouse is a needle now
-                self.findInjectedCell((x,y))
-                return
-            if needlex <= x <= imagex and needley <= y <= imagey:
-                self.mouseFigure = self.needleImg
-                self.needleMode = True
-                return
-            self.lineDrawn = [(x,y),(x,y),False]
-            for cell in self.cellList:
-                if cell.color == GREEN:
-                    if dist(x,y,cell.x,cell.y,cell.radius):
-                        self.lineDrawn = [(cell.x,cell.y),(cell.x,cell.y),True]
-                        self.dealCell = cell
-                        break
-
-            self.redrawAll()
-        else:
-            self.mouseOtherMode(event)
-    '''
-
     def mousePressed(self):
 
         if self.mode == "Running" or self.mode == "Tutorial":
@@ -253,7 +198,6 @@ class CellWar(object):
         if self.mode == "Choose Background":
             if self.bgchoice != None: # such that the choice is valid
                 self.background = self.backgroundImages[self.bgchoice]
-                pygame.mixer.Sound('Confirm.wav').play(0)
                 self.mode = "Choose Level"
         elif self.mode == "Game Over":
             self.gameOverChoices(event)
@@ -261,7 +205,6 @@ class CellWar(object):
             self.winChoices(event)
         elif self.mode == "Choose Level":
             self.identifyLevelImg(event)
-        #print "Mouse Pressed"
 
     def gameOverChoices(self,event):
         if self.gameOverchoice != None:
@@ -415,9 +358,6 @@ class CellWar(object):
             if event.key == K_LEFT:
                 self.achichoice = 0
         self.displayAchi()
-        
-
-
         
     
     def isGameOver(self):
@@ -593,7 +533,6 @@ class CellWar(object):
         pygame.display.flip()
 
 
-
     def doTutorial(self):
         font = pygame.font.SysFont("Calibri",18,True)
         if self.tutorialStep == 3:
@@ -637,53 +576,6 @@ class CellWar(object):
                 return cell.x,cell.y
         return None
         
-
-                        
-
-    ##########################################
-    # What should happen after win/game over
-    ##########################################
-    '''
-
-    def timerFired(self):
-        if self.mode != "Running":
-            self.mode="Choose Final Level"
-            self.bgchoice=1
-            self.finalLevel1_3();
-
-        if (self.mode == "Running" or self.mode == "Tutorial")\
-           and not self.isGameOver() and not self.isWin():
-            self.doTimeThing()
-            self.mousePos = pygame.mouse.get_pos()
-            #manually manage the event queue
-            if pygame.mouse.get_pressed()[0] == False and\
-               len(self.lineDrawn) == 3:
-                self.initial = self.lineDrawn[0]
-                self.recordPos = self.lineDrawn[1]
-                self.lineDrawn = []
-            if self.recordPos != None:
-                # first judges if EMB or ATT needs to move.
-                
-                do = self.tryMoveCell()
-                if do == False: # means potentially a cut
-                    self.tryConsiderCut()
-                    self.recordPos = None
-        if self.mode == "Running" or self.mode == "Tutorial":
-            if self.isWin(): # Win!
-                self.showWin()
-        if self.mode == "Running" or self.mode == "Tutorial":
-            if self.isGameOver(): # Lose!
-                self.showGameOver()
-                                              
-        for event in pygame.event.get():
-            if (event.type == pygame.QUIT):
-                pygame.quit()
-                self.mode = "Done"
-            elif (event.type == pygame.MOUSEBUTTONDOWN):
-                self.mousePressed(event)
-            elif (event.type == pygame.KEYDOWN):
-                self.keyPressed(event)
-    '''
     def mlAct(self):
 
         if(self.adjMat[self.cellStart.index][self.cellEnd.index]==0 and int(np.sum(self.adjMat[self.cellStart.index]))<self.maxLinks):
@@ -775,7 +667,8 @@ class CellWar(object):
                 greenEnergy-=self.mlPrevState[i+n*n+n]
                 countGreen-=1;
 
-        return ((countGreen-countRed)*10+(greenEnergy/(currentGreen+1)-redEnergy/(currentRed+1))*5+greenTentacles*10+reward);
+        #return ((countGreen-countRed)*10+(greenEnergy/(currentGreen+1)-redEnergy/(currentRed+1))*5+greenTentacles*10+reward);
+        return greenEnergy - redEnergy
 
 
     def timerFired(self):
@@ -784,7 +677,7 @@ class CellWar(object):
             self.mode="Choose Final Level"
             self.bgchoice=1
             self.numGames-=1;
-            print("EPSILON=",mlAgent.epsilon,"  GAME NUMBER=",self.numGames);
+            print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
             #self.finalLevel1_3();
             self.init(4)
             self.reset()
@@ -841,7 +734,7 @@ class CellWar(object):
             if self.isWin(): # Win!
                 mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
                 self.score+=winReward;
-                print("Hurray! You won with score=",self.score)
+                print("WIN  score=",self.score)
                 mlAgent.trainModel();
                 mlAgent.updateTargetModel();
                 mlAgent.model.save_weights("model.h5")
@@ -852,7 +745,7 @@ class CellWar(object):
             if self.isGameOver(): # Lose!
                 mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, -winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
                 self.score-=winReward;
-                print("Life is sad my friend -_- score=",self.score)
+                print("LOSS score=",self.score)
                 mlAgent.trainModel();
                 mlAgent.updateTargetModel();
                 mlAgent.model.save_weights("model.h5")
@@ -1196,9 +1089,11 @@ class CellWar(object):
                 self.target = cell
         return self.target
 
+
+'''
     def playShine(self,x,y,do=False):
         if do:
-            image = pygame.image.load("resources/BOOM.png").convert_alpha()
+            image = pygame.image.load("resoures/BOOM.png").convert_alpha()
             self.screen.blit(image,(x-90,y-64)) # Adjust the center of BOOM
         
     def isCollide(self,s1,s2):
@@ -1222,7 +1117,9 @@ class CellWar(object):
                         self.adjustValue(target,subtract,turnColor)
                         cell.value = abs(cell.value)
 
-                    
+'''
+
+
     def adjustValue(self,cell,minus,color):
         # dropping or strengthening cell!
         delta = -1 if cell.color == color else 1
