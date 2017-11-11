@@ -1,6 +1,3 @@
-#!/usr/bin/python1.9
-# Barebones timer, mouse, and keyboard events
-
 from operator import itemgetter, attrgetter
 import pygame
 from pygame.locals import *
@@ -20,7 +17,8 @@ from keras.optimizers import Adam
 from keras.models import Sequential
 
 maxEnergy =900
-winReward =5000
+winReward =10
+livingReward = -0.2
 energyRate =59
 mlModuloConst =131
 AIstopTime = 131
@@ -42,13 +40,14 @@ class ml2k17(object):
         self.stateSize=numCells*(numCells+2);
         self.actionSize=(numCells*(numCells-1)+1);
         self.discountFactor=0.9;
-        self.learningRate=0.001;
+        self.learningRate=0.1;
         self.epsilon=0.95;
-        self.epsilonDecay=0.9995;
+        self.epsilonDecay=0.99;
         self.epsilonMin=0.01;
-        self.batchSize=100
+        self.batchSize=1000
         self.trainStart=10
         self.memory=deque(maxlen=30000);
+        self.tempmemory=deque(maxlen=30000);
         self.model=self.buildModel();
         self.targetModel=self.buildModel();
         self.updateTargetModel();
@@ -88,17 +87,35 @@ class ml2k17(object):
     # save sample <s,a,r,s'> to the replay memory
     def appendSample(self, state, action, reward, nextState, done):
         self.memory.append((state, action, reward, nextState, done))
-        if self.epsilon > self.epsilonMin:
-            self.epsilon *= self.epsilonDecay
+        # if done:
+        #     if (reward == winReward):
+        #         for i in self.tempmemory: self.memory.append(i)
+        #         if self.epsilon > self.epsilonMin:
+        #             self.epsilon -= self.epsilonDecay
+        #     self.tempmemory.clear()
 
     # pick samples randomly from replay memory (with batch_size)
     def trainModel(self):
 
         if len(self.memory) < self.trainStart:
             return
-        batchSize = min(self.batchSize, len(self.memory))
-        miniBatch = random.sample(self.memory, batchSize)
-
+        # batchSize = min(self.batchSize, len(self.memory))
+        batchSize = len(self.memory)
+        miniBatch = list(reversed(self.memory))
+        self.memory.clear()
+        self.epsilon *= self.epsilonDecay
+        t1 = time.time()
+        for _ in range(5):
+            for state, action, reward, next_state, done in miniBatch:
+                target = reward
+                if not done:
+                    target = reward + self.discountFactor*np.amax(self.model.predict(next_state)[0])
+                target_f = self.model.predict(state)
+                target_f[0][action] = target
+                self.model.fit(state, target_f, epochs=1, verbose=0)
+        print("TIME={0:.3f}".format(time.time()-t1))
+        # miniBatch = random.sample(self.memory, batchSize)
+        '''
         updateInput = np.zeros((batchSize, self.stateSize))
         updateTarget = np.zeros((batchSize, self.stateSize))
         action, reward, done = [], [], []
@@ -122,11 +139,11 @@ class ml2k17(object):
 
         # and do the model fit!
         self.model.fit(updateInput, target, batch_size=batchSize,epochs=1, verbose=0)
-
+        '''
 
 class CellWar(object):
     def __init__(self):
-        self.numGames=100;
+        self.numGames=3;
         # For statistics and achievement page purpose
         self.actionForNow=0;
         self.score=0;
@@ -142,11 +159,11 @@ class CellWar(object):
         self.mlCurrState=np.zeros(self.numCells*(self.numCells+2));
         self.mlPrevState=np.zeros(self.numCells*(self.numCells+2));
 
-        self.mlNumActions=0;
+        self.mlNumActions = 0
         
-        self.mlModuloConst=mlModuloConst;
+        self.mlModuloConst = mlModuloConst
 
-        self.fps=FPS;
+        self.fps=FPS
         self.gamesPlayed = 0
         self.loses = 0
         self.enemyKilled = 0
@@ -155,10 +172,9 @@ class CellWar(object):
         self.totalAssist = 0
         self.achievement = [self.gamesPlayed,self.loses,self.enemyKilled,\
                          self.needleLeft,self.totalMerge,self.totalAssist]
-        self.fadeTime = 3000 # music fadeout time
 
     def reset(self):
-        n=self.numCells+0
+        n=self.numCells
         self.score=0;
         self.adjMat=np.zeros((n,n));
         self.mlNumActions=n*n-n+1;
@@ -195,11 +211,7 @@ class CellWar(object):
 
 
     def mouseOtherMode(self,event):
-        if self.mode == "Choose Background":
-            if self.bgchoice != None: # such that the choice is valid
-                self.background = self.backgroundImages[self.bgchoice]
-                self.mode = "Choose Level"
-        elif self.mode == "Game Over":
+        if self.mode == "Game Over":
             self.gameOverChoices(event)
         elif self.mode == "Win":
             self.winChoices(event)
@@ -270,7 +282,6 @@ class CellWar(object):
                 if level not in self.levelCleared:
                     self.levelCleared.append(self.levelChosen)
                 if level < totalLevel:
-                    #self.music.fadeout(self.fadeTime)
                     self.gamesPlayed += 1
                     self.init(level+1)
         if event.key == pygame.K_s:
@@ -283,15 +294,12 @@ class CellWar(object):
             print(self.levelCleared)
         elif event.key == pygame.K_m:
             self.doMainMenu() # for demo purpose, go back to main menu
-            #self.music.fadeout(self.fadeTime)
         self.keyPressedModeJudge(event)
 
     def keyPressedModeJudge(self,event):
         # different keyPress functions in different mode!
         if self.mode == "Main Menu":
-            self.mainMenuKey(event)            
-        elif self.mode == "Choose Background":
-            print("Use your mouse to choose!")
+            self.mainMenuKey(event)
         elif self.mode == "Choose Final Level":
             self.identifyLevel(event)
         elif self.mode == "Achievement":
@@ -313,7 +321,6 @@ class CellWar(object):
             pygame.display.update()
 
     def mainMenuKey(self,event):
-        sound = pygame.mixer.Sound('Thip.wav')
         if event.key == pygame.K_DOWN:
             self.menuNumber += 1
             sound.play(0)
@@ -393,7 +400,6 @@ class CellWar(object):
             #print self.dealCell
             self.clock.tick(self.fps)
 
-    
     def findInjectedCell(self, xxx_todo_changeme):
         (x,y) = xxx_todo_changeme
         adjust = 20*math.sqrt(2) # the adjusted position of x and y
@@ -445,7 +451,6 @@ class CellWar(object):
             self.AIControl()
 
     def doTimeThing(self):
-        # do every time in timerFired()
         self.animateCount += mlvarAC
         self.doInjection()
         self.redrawAll()
@@ -465,7 +470,6 @@ class CellWar(object):
         #print self.dealCell
         self.clock.tick(self.fps)
         self.testCollide()
-
 
     def level2Text(self):
         if self.animateCount < 60:
@@ -531,7 +535,6 @@ class CellWar(object):
                 self.doTutorial()                      
             
         pygame.display.flip()
-
 
     def doTutorial(self):
         font = pygame.font.SysFont("Calibri",18,True)
@@ -668,54 +671,29 @@ class CellWar(object):
                 countGreen-=1;
 
         #return ((countGreen-countRed)*10+(greenEnergy/(currentGreen+1)-redEnergy/(currentRed+1))*5+greenTentacles*10+reward);
-        return greenEnergy - redEnergy
+        return 0
 
 
     def timerFired(self):
-
-        if self.mode != "Running" and self.numGames!=0:
-            self.mode="Choose Final Level"
-            self.bgchoice=1
-            self.numGames-=1;
-            print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
-            #self.finalLevel1_3();
-            self.init(4)
-            self.reset()
-            '''
-            for layer in mlAgent.targetModel.layers:
-                g=layer.get_config();
-                h=layer.get_weights();
-                print(g)
-                print(h)
-            '''
-
-        if (self.mode == "Running" or self.mode == "Tutorial")\
-           and not self.isGameOver() and not self.isWin():
-            
+        if not self.isGameOver() and not self.isWin(): # Game running
             self.doTimeThing()
-
             if((self.animateCount)%(self.mlModuloConst)==0):
 
                 self.mlGetState();
-                reward = self.mlGetReward();
-                self.score+=reward;
-                reward -= 50;
-                self.score-=50
-                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, reward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), False);
-                mlAgent.trainModel();
-                self.actionForNow=mlAgent.getAction(np.reshape(self.mlCurrState,[1,mlAgent.stateSize]));
+                reward = self.mlGetReward() - livingReward
+                self.score += reward;
+                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, 
+                    reward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), False)
+                # mlAgent.trainModel()
+                self.actionForNow=mlAgent.getAction(np.reshape(self.mlCurrState,[1,mlAgent.stateSize]))
 
-                #rand=np.random.randint(self.mlNumActions);
                 if(self.actionForNow!=0):
-                    (self.cellStart, self.cellEnd) = self.mlChooseEvent(self.actionForNow);
+                    (self.cellStart, self.cellEnd) = self.mlChooseEvent(self.actionForNow)
                     if(self.cellStart.color==GREEN):
-                        #print("Starting Joining",self.cellStart.index,self.cellEnd.index)
-                        self.mlAct();
-                        #print("Ending Joining",self.cellStart.index,self.cellEnd.index)
+                        self.mlAct()
 
                 self.mlPrevState=self.mlCurrState+0;
             #manually manage the event queue
-
 
             if len(self.lineDrawn) == 3:
                 self.initial = self.lineDrawn[0]
@@ -730,34 +708,25 @@ class CellWar(object):
                     #self.tryConsiderCut()
                     self.recordPos = None
 
-        if self.mode == "Running" or self.mode == "Tutorial":
-            if self.isWin(): # Win!
-                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
-                self.score+=winReward;
-                print("WIN  score=",self.score)
-                mlAgent.trainModel();
-                mlAgent.updateTargetModel();
+        elif not self.isGameOver() and self.isWin(): # Win!
+                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
+                    winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
+                self.score+=winReward
+                print("  WIN    score=",self.score, end="  ")
+                mlAgent.trainModel()
+                mlAgent.updateTargetModel()
                 mlAgent.model.save_weights("model.h5")
-                self.mode="Win"
                 self.showWin()
 
-        if self.mode == "Running" or self.mode == "Tutorial":
-            if self.isGameOver(): # Lose!
-                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, -winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
-                self.score-=winReward;
-                print("LOSS score=",self.score)
-                mlAgent.trainModel();
-                mlAgent.updateTargetModel();
+        elif self.isGameOver() and not self.isWin(): # Lose!
+                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
+                    -winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
+                self.score-=winReward
+                print("  LOSS   score=",self.score, end="  ")
+                mlAgent.trainModel()
+                mlAgent.updateTargetModel()
                 mlAgent.model.save_weights("model.h5")
-                self.mode="Game Over"
                 self.showGameOver()
-                                              
-        for event in pygame.event.get():
-            if (event.type == pygame.QUIT or self.numGames == 0):
-                pygame.quit()
-                self.mode = "Done"
-            elif (event.type == pygame.KEYDOWN):
-                self.keyPressed(event)                
 
     ######################### END OF TIMERFIRED ##########################            
     ######################### END OF TIMERFIRED ##########################
@@ -1089,8 +1058,6 @@ class CellWar(object):
                 self.target = cell
         return self.target
 
-
-'''
     def playShine(self,x,y,do=False):
         if do:
             image = pygame.image.load("resoures/BOOM.png").convert_alpha()
@@ -1110,15 +1077,9 @@ class CellWar(object):
                         self.playShine(cell.x,cell.y,True)
                         self.cellList.remove(cell)
                         self.totalMerge += 1
-                        bounce = pygame.mixer.Sound("bounce.wav")
-                        bounce.set_volume(80)
-                        bounce.play(0)
                         target = cell2
                         self.adjustValue(target,subtract,turnColor)
                         cell.value = abs(cell.value)
-
-'''
-
 
     def adjustValue(self,cell,minus,color):
         # dropping or strengthening cell!
@@ -1427,78 +1388,23 @@ class CellWar(object):
             self.mode = "Loading"
             self.clock.tick(self.fps)
             self.animateCount += mlvarAC
-            self.screen.blit(pygame.image.load('resources/HeadPhone.jpg'),(0,0))
-            pygame.display.update()
 
         self.animateCount=40
         self.mode = "Main Menu"
         # start playing music in the mainMenu
         self.levelCleared = [0,1]
         self.menuOption = ["Play","Help","Credit","Achievement"]
-        self.mainImages = [pygame.image.load('resources/TPMenu1.jpg'),\
-                           pygame.image.load('resources/TPMenu2.jpg'),\
-                           pygame.image.load('resources/TPMenu3.jpg'),\
-                           pygame.image.load('resources/TPMenu4.jpg')]
-        
-        # this is for when choosing backgrounds
-        self.backgroundImages = [pygame.image.load('resources/Skyland.jpg'),\
-                                 pygame.image.load('resources/StoneAge.jpg'),\
-                                 pygame.image.load('resources/Universe.jpg')]
-        
         # this is for background
-        self.bgImagePool = [pygame.image.load('resources/Skyland2.jpg'),\
-                            pygame.image.load('resources/StoneAge2.jpg'),\
-                            pygame.image.load('resources/Universe2.jpg')]
         
-        self.helpPages = [pygame.image.load('resources/help1.jpg'),\
-                          pygame.image.load('resources/help2.jpg'),\
-                          pygame.image.load('resources/help3.jpg'),\
-                          pygame.image.load('resources/help4.jpg'),\
-                          pygame.image.load('resources/help5.jpg')]
-        
-        self.winImages = [pygame.image.load('resources/result31.jpg'),\
-                          pygame.image.load('resources/result32.jpg'),\
-                          pygame.image.load('resources/result33.jpg')]
-
-        self.gameOverImages = [pygame.image.load('resources/result41.jpg'),\
-                               pygame.image.load('resources/result42.jpg')]
         self.levelPage = "1-3"
-        self.doMainMenu()
-
-    def doMainMenu(self):
         self.mode = "Main Menu"
         self.menuNumber = 0
         self.creInitx,self.creInity = 320,100
         self.achichoice = 0
-        self.screen.blit(self.mainImages[0],(0,0))
         self.gameDisplayDepth = 1 # the depth of game, main menu is 1
-        #print "reach here"
-        pygame.display.update()
-
-    def doBackground(self): # of depth 2
-        self.mode = "Choose Background"
-        self.screen.blit(pygame.image.load('resources/BGdefault.jpg'),(0,0))
-        self.bgchoice = 1
-        self.screen.blit(self.backgroundImages[1],(0,0))
-        '''
-        (x,y) = pygame.mouse.get_pos()
-        if 37 <= x <= 215 and 35 <= y <= 220:
-            self.bgchoice = 0
-            self.screen.blit(self.backgroundImages[0],(0,0))
-        elif 248 <= x <= 424 and 172 <= y <= 355:
-            self.bgchoice = 1
-            self.screen.blit(self.backgroundImages[1],(0,0))
-        elif 480 <= x <= 652 and 322 <= y <= 500:
-            self.bgchoice = 2
-            self.screen.blit(self.backgroundImages[2],(0,0))
-        else:
-            self.bgchoice = None
-        '''
-        pygame.display.update()
 
     def doWin(self):
         self.mode = "Win" # shift the self.mode to stop other running functions
-        #self.music.fadeout(self.fadeTime)
         self.screen.blit(pygame.image.load('resources/result3.jpg'),(0,0))
         (x,y) = pygame.mouse.get_pos()
         if 162 <= x <= 244 and 558 <= y <= 631:
@@ -1522,7 +1428,6 @@ class CellWar(object):
 
     def doGameOver(self):
         self.mode = "Game Over" # shift the self.mode
-        #self.music.fadeout(self.fadeTime)
         self.screen.blit(pygame.image.load('resources/result4.jpg'),(0,0))
         (x,y) = pygame.mouse.get_pos()
         if 225 <= x <= 305 and 558 <= y <= 631:
@@ -1539,15 +1444,7 @@ class CellWar(object):
         self.screen.blit(textObj,textPos)
         pygame.display.update()
                         
-        
-
-    def openHelp(self):
-        self.mode = "Help"
-        self.helpInd = 0
-        self.screen.blit(self.helpPages[self.helpInd],(0,0))
-        pygame.display.update()
-
-            
+       
     def chooseLevel(self): # of depth 3
         pool = self.levelCleared + [self.levelCleared[-1]+1]
         if self.levelPage == "1-3":
@@ -1708,7 +1605,6 @@ class CellWar(object):
         pygame.display.update()
 
     
-
     def actLevel7(self,x,y):
         # this is called when level 7 is available, in the main level page
         if 87 <= x <= 154 and 279 <= y <= 355:
@@ -1731,14 +1627,10 @@ class CellWar(object):
         
 
     def runMenuOption(self,option): # choosing at depth 1
-        pygame.mixer.Sound('Confirm.wav').play(0)
         if option == "Play":
             # Should choose level first
             self.doBackground()
-            self.gameDisplayDepth += 1            
-        elif option == "Help":
-            self.openHelp()
-            self.gameDisplayDepth = 2
+            self.gameDisplayDepth += 1
         elif option == "Credit":
             self.runCredit()
         elif option == "Achievement":
@@ -1836,16 +1728,12 @@ class CellWar(object):
 
     def initImgAndMusic(self):
         self.winImgy = -700
-        self.bgimage = self.bgImagePool[self.bgchoice]
-        #self.music = pygame.mixer.Sound("Christian.ogg")
-        #self.musicChannel = self.music.play(-1)
-        #self.music.stop()
         self.loadImageList()       
         # set self.animateCount to zero again
         self.animateCount = 0
 
     def init(self,level): # level as a number
-        self.mode = "Running" if level > 1 else "Tutorial"
+        self.mode = "Running"
         if self.mode == "Tutorial":
             self.runTutSetup()
         self.initImgAndMusic()
@@ -1872,9 +1760,7 @@ class CellWar(object):
         return level.cellList
     
     def run(self):
-        pygame.mixer.pre_init(44010,16,2,4096) # setting the music environment
-        pygame.init()      
-        
+        pygame.init()
         # initialize the screen
         self.screenSize = (700,700)
         self.screen = pygame.display.set_mode(self.screenSize)
@@ -1885,13 +1771,17 @@ class CellWar(object):
         # the cell we are dealing with
         self.dealCell = "ATT"
         self.animateCount = 0
-        self.menuInit()
-
-        while (self.mode != "Done"):
-            self.timerFired() 
-
-
-        
+        # self.menuInit()
+        self.bgimage = pygame.image.load('resources/StoneAge2.jpg')
+        self.init(4)
+        while (self.numGames > 0):
+            if self.isGameOver():
+                self.numGames -= 1
+                print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
+                self.init(4)
+                self.reset()
+            self.timerFired()
+        pygame.quit()
                 
 class Target(pygame.sprite.Sprite):
     """ Fake cells to test collision"""
@@ -2177,7 +2067,6 @@ class Embracer(Cell):
         # ONLY ENEMY CELL NEEDS TO UPDATE.
         self.think(environment,animateCount)
         # change mode,find friends,find enemies
-
             
 class Level_8(object):
     def __init__(self):
@@ -2190,9 +2079,9 @@ class Level_8(object):
 class Level_4(object):
     def __init__(self):
 
-        self.c1 = Cell(250,150,100,GREEN,0)
-        self.c2 = Cell(450,150,40,RED,1)
-        self.c3 = Cell(50,50,30,RED,2)
+        self.c1 = Cell(350,250,60,GREEN,0)
+        self.c2 = Cell(550,250,40,RED,1)
+        self.c3 = Cell(150,150,30,RED,2)
         self.cellList = [self.c1,self.c2,self.c3]
         self.maximum = maxEnergy
 
@@ -2232,7 +2121,6 @@ class Level_6(object):
         self.maximum = 70
         self.cellList = [self.c1,self.c2,self.c3]
 
-
 class Level_3(object):
     def __init__(self):
         self.c1 = Cell(100,400,5,(55,55,55))
@@ -2271,7 +2159,6 @@ class Level_5(object):
             self.cellList.append(cell)
         self.maximum = 90
 
-
 class Level_7(object):
     def __init__(self):
         blueY = random.randint(350,450)
@@ -2291,7 +2178,6 @@ class Level_7(object):
                          self.c6,self.c7,self.c8,self.c9,self.c10,\
                          self.c11,self.c12]
         self.maximum = 90
-
         
 class Lock(object):
     def __init__(self,x,y):
@@ -2406,9 +2292,6 @@ class Chain(object):
             self.subtractCellValue = True
         if dist(newx,newy,self.endx,self.endy,regularRad):
             self.shouldGrow = False
-            #collide = pygame.mixer.Sound('Collide.ogg')
-            #collide.play(0)
-            #collide.set_volume(30)
             self.subtractCellValue = False
 
     def drawChain(self,surface):
@@ -2451,13 +2334,10 @@ class Chain(object):
         return """Chain starting from (%.1f,%.1f) and ending at (%.1f,%.1f),
         with angle %.1f"""\
                %(self.startx,self.starty,self.endx,self.endy,self.direction)
-                        
-                   
 
 def dist(x1,y1,x2,y2,r):
     return ((x1-x2)**2+(y1-y2)**2)**(0.5) <= r+3
 
-pygame.init() #turn all of pygame on.
 my_CellWar = CellWar()
 mlAgent = ml2k17(my_CellWar.numCells);
 my_CellWar.run()
@@ -2467,23 +2347,3 @@ my_CellWar.run()
 ############################
 
 testWar = CellWar()
-
-def testFindIntersection():
-    print("Testing findIntersection()...", end=' ')
-    assert(testWar.findIntersection((0,0),(2,2),(0,2),(2,0)) == (1,1))
-    assert(testWar.findIntersection((1,1),(3,1),(5,5),(2,2)) == False)
-    assert(testWar.findIntersection((1,1),(3,1),(2,-1),(2,4)) == (2,1))
-    assert(testWar.findIntersection((4,0),(0,2),(2,0),(2,2)) == (2,1))
-    print("Passed!")
-
-def testDist():
-    print("Testing dist()...", end=' ')
-    assert(dist(1,1,2,2,10) == True)
-    assert(dist(1,1,5,5,1) == False)
-    assert(dist(0,0,3,0,2) == True)
-    assert(dist(1,3,2,4,2) == True)
-    print("Passed!")
-
-testFindIntersection()
-testDist()
-
