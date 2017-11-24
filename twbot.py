@@ -16,15 +16,14 @@ from keras.layers import Dense
 from keras.optimizers import Adam
 from keras.models import Sequential
 
-maxEnergy =900
-winReward =10
-livingReward = -0.2
-energyRate =59
-mlModuloConst =131
-AIstopTime = 131
-wantAI=1;
-FPS=0;
-mlvarAC=1;
+maxEnergy = 150
+numGames = 300
+winReward = 150
+livingReward = -1
+energyRate = 13
+mlModuloConst = 13
+AIstopTime = 13
+FPS=0
 GREEN = (47,171,51)
 RED = (200,0,0)
 GRAY = (55,55,55)
@@ -34,339 +33,143 @@ WARMYELLOW = (255,255,85)
 class ml2k17(object):
     def __init__(self, numCells):
 
-        self.render= False;
-        self.load_model=False;
-        self.numCells=numCells
-        self.stateSize=numCells*(numCells+2);
-        self.actionSize=(numCells*(numCells-1)+1);
-        self.discountFactor=0.9;
-        self.learningRate=0.1;
-        self.epsilon=0.95;
-        self.epsilonDecay=0.99;
-        self.epsilonMin=0.01;
-        self.batchSize=1000
-        self.trainStart=10
-        self.memory=deque(maxlen=30000);
-        self.tempmemory=deque(maxlen=30000);
-        self.model=self.buildModel();
-        self.targetModel=self.buildModel();
-        self.updateTargetModel();
+        self.temp = 0
+        self.load_model = False
+        self.shouldTrain = True
+        self.numCells = numCells
+        self.stateSize = numCells*(numCells+1)
+        self.actionSize = (2*numCells*(numCells-1))+1
+        self.discountFactor = 0.999
+        self.learningRate = 0.01
+        self.epsilon = 0.75
+        self.epsilonDecay = 0.005
+        self.epsilonMin = 0.01
+        self.batchSize = 10
+        self.trainStart = 10
+        self.winmemory = []
+        self.losememory = []
+        self.tempmemory = deque(maxlen=1000)
+        self.winGameNum = 20
+        self.loseGameNum = 20
+        self.model = self.buildModel()
         if self.load_model:
             self.model.load_weights("model.h5")
 
     def buildModel(self):
-        model=Sequential();
-        model.add(Dense(int(self.stateSize*1.3), input_dim=self.stateSize, activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.6), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(int(self.stateSize*1.3), activation='relu',kernel_initializer='he_uniform'))
-        model.add(Dense(self.actionSize, activation='linear',kernel_initializer='he_uniform'))
+        model=Sequential()
+        model.add(Dense(int(self.stateSize*1.3), input_dim=self.stateSize,
+            kernel_initializer='zeros', bias_initializer='random_uniform', activation='relu'))
+        model.add(Dense(int(self.stateSize*1.6), kernel_initializer='zeros',
+            bias_initializer='random_uniform',  activation='relu'))
+        model.add(Dense(int(self.stateSize*1.3), kernel_initializer='zeros',
+            bias_initializer='random_uniform',  activation='relu'))
+        model.add(Dense(self.actionSize, activation='linear'))
         #model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learningRate))
-        return model;
-
-    def updateTargetModel(self):
-        self.targetModel.set_weights(self.model.get_weights());
+        return model
 
     # get action from model using epsilon-greedy policy
     def getAction(self, state):
-
-        if np.random.rand() <= self.epsilon:
-            #print("Taking Random Action")
-            rand=random.randrange(self.actionSize);
-            n=self.numCells;
-            row=int((rand-1)/(n-1));
-            if(state[0][row+n*n]==1):
-                return rand;
-            else:
-                return self.getAction(state);
-        else:
-            #print("Taking best action")
-            qValue = self.model.predict(state)
-            return np.argmax(qValue[0])
+        # if np.random.rand() <= self.epsilon:
+        #     rand = random.randrange(self.actionSize)
+        #     return rand
+            # n = self.numCells
+            # row = int((rand-1)/(n-1))
+            # if(state[0][row+n*n] == 1): return rand
+            # else: return self.getAction(state)
+        # else:
+        qValue = self.model.predict(state)
+        # print(qValue[0])
+        return np.argmax(qValue[0])
 
     # save sample <s,a,r,s'> to the replay memory
-    def appendSample(self, state, action, reward, nextState, done):
-        self.memory.append((state, action, reward, nextState, done))
-        # if done:
-        #     if (reward == winReward):
-        #         for i in self.tempmemory: self.memory.append(i)
-        #         if self.epsilon > self.epsilonMin:
-        #             self.epsilon -= self.epsilonDecay
-        #     self.tempmemory.clear()
+    def appendSample(self, state, action, reward, nextState, done, score):
+        self.tempmemory.append((state, action, reward, nextState, done))
+        if done:
+            temp = deque(maxlen=1000)
+            for i in self.tempmemory: temp.append(i)
+            try:
+                if (reward == winReward): heapq.heappush(self.winmemory, (-score, temp))
+                else: heapq.heappush(self.losememory, (-score, temp))
+            except Exception as e:
+                pass
+            if self.epsilon > self.epsilonMin:
+                self.epsilon -= self.epsilonDecay
+            self.tempmemory.clear()
 
     # pick samples randomly from replay memory (with batch_size)
     def trainModel(self):
-
-        if len(self.memory) < self.trainStart:
-            return
-        # batchSize = min(self.batchSize, len(self.memory))
-        batchSize = len(self.memory)
-        miniBatch = list(reversed(self.memory))
-        self.memory.clear()
-        self.epsilon *= self.epsilonDecay
-        t1 = time.time()
-        for _ in range(5):
+        # winBatch = min(self.winGameNum, len(self.winmemory))
+        # loseBatch = min(self.loseGameNum, len(self.losememory))
+        # winmini = random.sample(self.winmemory, winBatch)
+        # losemini = random.sample(self.losememory, loseBatch)
+        winmini = heapq.nsmallest(self.winGameNum, self.winmemory, key=lambda x:x[0])
+        losemini = heapq.nsmallest(self.loseGameNum, self.losememory, key=lambda x:x[0])
+        for score, i in winmini:
+            # print(score)
+            miniBatch = list(reversed(i))
             for state, action, reward, next_state, done in miniBatch:
                 target = reward
                 if not done:
                     target = reward + self.discountFactor*np.amax(self.model.predict(next_state)[0])
                 target_f = self.model.predict(state)
                 target_f[0][action] = target
-                self.model.fit(state, target_f, epochs=1, verbose=0)
-        print("TIME={0:.3f}".format(time.time()-t1))
-        # miniBatch = random.sample(self.memory, batchSize)
-        '''
-        updateInput = np.zeros((batchSize, self.stateSize))
-        updateTarget = np.zeros((batchSize, self.stateSize))
-        action, reward, done = [], [], []
-        
-        for i in range(batchSize):
-            updateInput[i] = miniBatch[i][0]
-            action.append(miniBatch[i][1])
-            reward.append(miniBatch[i][2])
-            updateTarget[i] = miniBatch[i][3]
-            done.append(miniBatch[i][4])
-
-        target = self.model.predict(updateInput)
-        targetVal = self.targetModel.predict(updateTarget)
-
-        for i in range(batchSize):
-            # Q Learning: get maximum Q value at s' from target model
-            if done[i]:
-                target[i][action[i]] = reward[i]
-            else:
-                target[i][action[i]] = reward[i] + self.discountFactor * (np.amax(targetVal[i]))
-
-        # and do the model fit!
-        self.model.fit(updateInput, target, batch_size=batchSize,epochs=1, verbose=0)
-        '''
+                self.model.fit(state, target_f, epochs=5, verbose=0)
+        for score, i in losemini:
+            # print  (score)
+            miniBatch = list(reversed(i))
+            for state, action, reward, next_state, done in miniBatch:
+                target = reward
+                if not done:
+                    target = reward + self.discountFactor*np.amax(self.model.predict(next_state)[0])
+                target_f = self.model.predict(state)
+                target_f[0][action] = target
+                self.model.fit(state, target_f, epochs=5, verbose=0)
 
 class CellWar(object):
     def __init__(self):
-        self.numGames=3;
-        # For statistics and achievement page purpose
-        self.actionForNow=0;
-        self.score=0;
-
-        self.cellStart=-1;
-        self.cellEnd=-1;
-        
-        self.numCells=3;
-        self.maxLinks=2;
-        
-        self.adjMat=np.zeros((self.numCells,self.numCells));
-        
-        self.mlCurrState=np.zeros(self.numCells*(self.numCells+2));
-        self.mlPrevState=np.zeros(self.numCells*(self.numCells+2));
-
+        self.numGames = numGames
+        self.actionForNow=0
+        self.score=0
+        self.cellStart=-1
+        self.cellEnd=-1
+        self.numCells=3
+        self.maxLinks=2
+        self.adjMat = np.zeros((self.numCells,self.numCells))
+        self.mlCurrState = np.zeros(self.numCells*(self.numCells+1))
+        self.mlPrevState = np.zeros(self.numCells*(self.numCells+1))
         self.mlNumActions = 0
-        
         self.mlModuloConst = mlModuloConst
-
         self.fps=FPS
-        self.gamesPlayed = 0
-        self.loses = 0
-        self.enemyKilled = 0
-        self.needleLeft = 3
-        self.totalMerge = 0
-        self.totalAssist = 0
-        self.achievement = [self.gamesPlayed,self.loses,self.enemyKilled,\
-                         self.needleLeft,self.totalMerge,self.totalAssist]
 
     def reset(self):
         n=self.numCells
         self.score=0;
         self.adjMat=np.zeros((n,n));
         self.mlNumActions=n*n-n+1;
-        self.mlCurrState=np.zeros(n*(n+2));
+        self.mlCurrState=np.zeros(n*(n+1));
         for i in range(n):
             if(self.cellList[i].color==RED):
-                self.mlCurrState[i+n*n]=-1;
-            else:
-                self.mlCurrState[i+n*n]=1;
-            self.mlCurrState[i+n*n+n]=self.cellList[i].value
-
-        self.mlPrevState=self.mlCurrState+0;
+                self.mlCurrState[i+n*n] = -self.cellList[i].value
+            else: self.mlCurrState[i+n*n] = self.cellList[i].value
+        np.copyto(self.mlPrevState, self.mlCurrState)
 
     def mousePressed(self):
+        self.recordPos = None
+        x = self.cellStart.x
+        y = self.cellStart.y
 
-        if self.mode == "Running" or self.mode == "Tutorial":
-            self.recordPos = None # refresh everytime with NEW click
-            needlex,needley,imagex,imagey = 647,643,700,700
-            
-            x=self.cellStart.x;
-            y=self.cellStart.y;
-            
-            self.lineDrawn = [(x,y),(x,y),False]
-            for cell in self.cellList:
-                if cell.color == GREEN:
-                    if dist(x,y,cell.x,cell.y,cell.radius):
-                        self.lineDrawn = [(cell.x,cell.y),(cell.x,cell.y),True]
-                        self.dealCell = cell
-                        break
+        self.lineDrawn = [(x,y),(x,y),False]
+        for cell in self.cellList:
+            if cell.color == GREEN:
+                if dist(x,y,cell.x,cell.y,cell.radius):
+                    self.lineDrawn = [(cell.x,cell.y),(cell.x,cell.y),True]
+                    self.dealCell = cell
+                    break
 
-            self.redrawAll()
-        else:
-            self.mouseOtherMode(event)
+        self.redrawAll()
 
 
-    def mouseOtherMode(self,event):
-        if self.mode == "Game Over":
-            self.gameOverChoices(event)
-        elif self.mode == "Win":
-            self.winChoices(event)
-        elif self.mode == "Choose Level":
-            self.identifyLevelImg(event)
-
-    def gameOverChoices(self,event):
-        if self.gameOverchoice != None:
-            self.gamesPlayed += 1
-            self.loses += 1
-            if self.gameOverchoice == 0:
-                self.chooseLevel()
-            elif self.gameOverchoice == 1:
-                self.init(self.levelChosen)
-
-    def winChoices(self,event):
-        if self.winchoice != None:
-            self.gamesPlayed += 1
-            if self.levelChosen >= 4: self.needleLeft += 1
-            #Completing level 4 or above get a needle award
-            if self.winchoice == 0:
-                self.chooseLevel()
-            elif self.winchoice == 1:
-                self.init(self.levelChosen)
-            elif self.winchoice == 2: # click the third button
-                self.levelCleared = list(range(self.levelChosen+1))
-                totalLevel = 7
-                if self.levelChosen != totalLevel:
-                    self.levelChosen += 1
-                    self.init(self.levelChosen)
-                else:
-                    self.doMainMenu()
-
-    def identifyLevelImg(self,event):
-        (x,y) = pygame.mouse.get_pos()
-        if self.levelPage == "1-3":
-            if 252 <= x <= 415 and 243 <= y <= 397:
-                self.mode = "Choose Final Level"
-                self.finalLevel1_3()
-            elif 300 <= x <= 382 and 595 <= y <= 672:
-                self.doMainMenu()
-            elif 533 <= x <= 596 and 279 <= y <= 351:
-                self.levelPage = "4-6"
-                self.chooseLevel()
-        elif self.levelPage == "4-6":
-            prereqLength = 3
-            if len(self.levelCleared[1:]) >= prereqLength:
-                self.actLevel4_6(x,y)
-            else:
-                self.unactLevel4_6(x,y)
-        else:
-            prereqLength = 6
-            if len(self.levelCleared[1:]) >= prereqLength:
-                self.actLevel7(x,y)
-            else:
-                self.unactLevel7(x,y)
-
-
-
-            
-    def keyPressed(self,event):
-        print("Key Pressed")
-        totalLevel = 7
-
-        if self.mode == "Running":
-            if event.key == pygame.K_q:
-                level = self.levelChosen
-                if level not in self.levelCleared:
-                    self.levelCleared.append(self.levelChosen)
-                if level < totalLevel:
-                    self.gamesPlayed += 1
-                    self.init(level+1)
-        if event.key == pygame.K_s:
-            #self.saveLoad()
-            pass
-        elif event.key == pygame.K_SPACE:
-            #self.readFile()
-            pass
-        elif event.key == pygame.K_p:
-            print(self.levelCleared)
-        elif event.key == pygame.K_m:
-            self.doMainMenu() # for demo purpose, go back to main menu
-        self.keyPressedModeJudge(event)
-
-    def keyPressedModeJudge(self,event):
-        # different keyPress functions in different mode!
-        if self.mode == "Main Menu":
-            self.mainMenuKey(event)
-        elif self.mode == "Choose Final Level":
-            self.identifyLevel(event)
-        elif self.mode == "Achievement":
-            self.identifyAchievementPage(event)
-        elif self.mode == "Credit":
-            if event.key == pygame.K_r:
-                self.doMainMenu()
-        elif self.mode == "Help":
-            if event.key == pygame.K_r:
-                self.doMainMenu() # if r is pressed in "help", get back to main menu
-            elif event.key == pygame.K_RIGHT:
-                if self.helpInd < 4:
-                    self.helpInd += 1 # maximum is 4
-                    self.screen.blit(self.helpPages[self.helpInd],(0,0))
-            elif event.key == pygame.K_LEFT:
-                if self.helpInd > 0:
-                    self.helpInd -= 1 # minimum is 0
-                    self.screen.blit(self.helpPages[self.helpInd],(0,0))
-            pygame.display.update()
-
-    def mainMenuKey(self,event):
-        if event.key == pygame.K_DOWN:
-            self.menuNumber += 1
-            sound.play(0)
-        elif event.key == pygame.K_UP:
-            self.menuNumber -= 1
-            sound.play(0)
-        elif event.key == pygame.K_RETURN:
-            self.runMenuOption(self.menuOption[self.menuNumber])
-        self.menuNumber %= len(self.menuOption)
-        if self.gameDisplayDepth == 1: # on main menu
-            self.screen.blit(self.mainImages[self.menuNumber],(0,0))
-            pygame.display.update()
-                
-    def identifyLevel(self,event):
-        if event.key == K_r:
-            self.chooseLevel()
-        else:
-            diff,totalLevel,fullLevelPage = 48,7,3
-            if diff <= event.key <= diff+totalLevel:
-                # account for 'unicode' in pygame
-                self.levelText = "%s" %str(event.key-diff)
-            if len(self.levelPage) == fullLevelPage:
-                low,high = eval(self.levelPage[0]),self.levelCleared[-1]+1
-            else:
-                low = high = totalLevel
-            if event.key == K_RETURN and len(self.levelText) == 1 and \
-               low <= eval(self.levelText) <= high :
-                self.init(eval(self.levelText))
-            elif self.levelPage == "1-3":
-                self.finalLevel1_3()
-            elif self.levelPage == "4-6":
-                self.finalLevel4_6()
-
-    def identifyAchievementPage(self,event):
-        if event.key == K_r:
-            self.doMainMenu()
-            return
-        if self.achichoice == 0:
-            if event.key == K_RIGHT:
-                self.achichoice = 1
-        elif self.achichoice == 1:
-            if event.key == K_LEFT:
-                self.achichoice = 0
-        self.displayAchi()
-        
-    
     def isGameOver(self):
         for cell in self.cellList:
             if cell.name == "ATT" and cell.color == GREEN:
@@ -380,319 +183,84 @@ class CellWar(object):
                 return False
         return True # Win
 
-    def timerFiredElse(self):
-        if self.mode == "Choose Background":
-            self.doBackground()
-        elif self.mode == "Credit":
-            self.animateCount += mlvarAC
-            self.runCredit()
-        elif self.mode == "Achievement":
-            self.displayAchi()
-        elif self.mode == "Win":
-            self.doWin()
-        elif self.mode == "Game Over":
-            self.doGameOver()
-        elif self.mode == "Choose Level":
-            self.chooseLevel()
-        elif self.mode == "Loading":
-            self.animateCount += mlvarAC
-            self.fps = FPS
-            #print self.dealCell
-            self.clock.tick(self.fps)
-
-    def findInjectedCell(self, xxx_todo_changeme):
-        (x,y) = xxx_todo_changeme
-        adjust = 20*math.sqrt(2) # the adjusted position of x and y
-        for cell in self.cellList:
-            if dist(cell.x,cell.y,x-adjust,y+adjust,30):
-                if self.needleLeft > 0:
-                    cell.getNeedle = True
-                    self.needleLeft -= 1
-                break
-        self.needleMode = False
-
-    def doInjection(self):
-        maxInjectTime = 30
-        for cell in self.cellList:
-            if cell.getNeedle:
-                cell.injectTime += 1
-                if cell.injectTime <= maxInjectTime:
-                    if cell.color == GREEN and cell.value < self.maximum:
-                        cell.value += 1
-                    else:
-                        cell.value -= 1
-                        if cell.value < 0: # turn to GREEN!
-                            if cell.color == GRAY:
-                                cell.value = 20
-                            else:
-                                cell.value = abs(cell.value)
-                                if cell.name != "EMB":
-                                    self.forceMakeCollapse(cell)
-                                self.enemyKilled += 1
-                            cell.color = GREEN
-                    #self.drawBubbleEffect(cell.x,cell.y)
-                else:
-                    cell.getNeedle = False
-                    cell.injectTime = 0
-
     def doTimeAdjust(self):
-        if self.mode == "Tutorial":
-            self.displayTut()
-        
         if self.animateCount % energyRate == 0:
             self.shinex = self.shiney = None
             self.increaseValue(GREEN)
-
-        if self.animateCount % energyRate == 0:
             self.increaseValue(RED)
-        
-        if self.animateCount % AIstopTime == 0 and self.mode == "Running" and wantAI:
-            # No AI in tutorial
+        if self.animateCount % AIstopTime == 0:
             self.AIControl()
 
     def doTimeThing(self):
-        self.animateCount += mlvarAC
-        self.doInjection()
+        self.animateCount += 1
+        # print(self.animateCount)
         self.redrawAll()
         self.doTimeAdjust()            
-        if self.AIEMB != None and self.mode == "Running":
-            self.tryMoveAIEMB()
-        if self.animateCount < 140:
-            if self.levelChosen == 2:
-                self.level2Text()
-            elif self.levelChosen == 4:
-                self.level4Text()
-            elif self.levelChosen == 6:
-                self.level6Text()
-            elif self.levelChosen == 7:
-                self.level7Text()
+        # if self.AIEMB != None:
+        #     self.tryMoveAIEMB()
         self.fps = FPS
-        #print self.dealCell
         self.clock.tick(self.fps)
-        self.testCollide()
+        # self.testCollide()
 
-    def level2Text(self):
-        if self.animateCount < 60:
-            note = "Welcome to level 2. You know how to control, now try!"
-        else:
-            note = "The GRAY cell is neutral. Enjoy!"
-        font = pygame.font.SysFont("Calibri",20,True)
-        textObj = font.render("%s" %note,True,(255,255,255))
-        self.screen.blit(textObj,(80,160))
-        pygame.display.flip()
-
-    def level4Text(self):
-        if self.animateCount < 40:
-            note = "Now, the computer AI is getting smarter for level above!"
-        elif 40 <= self.animateCount < 100:
-            note = "Computer can also assist its own allies!"
-        else:
-            note = "Enjoy!"
-        font = pygame.font.SysFont("Calibri",20,True)
-        textObj = font.render("%s" %note,True,(255,255,255))
-        self.screen.blit(textObj,(100,60))
-        pygame.display.flip()
-
-    def level6Text(self):
-        if self.animateCount < 40:
-            note = "Why not try some geometry?"
-        elif 40 <= self.animateCount < 100:
-            note = "The enemy is now surrounded! Assimilate it!"
-        else:
-            note = "Enjoy!"
-        font = pygame.font.SysFont("Calibri",20,True)
-        textObj = font.render("%s" %note,True,(255,255,255))
-        self.screen.blit(textObj,(120,60))
-        pygame.display.flip()
-
-    def level7Text(self):
-        if self.animateCount < 40:
-            note = "Congrats! You have reached the FINAL CHALLENGE!"
-        elif 40 <= self.animateCount < 100:
-            note = "There are three camps of cells now. Do your best to win!"
-        else:
-            note = "Enjoy!"
-        font = pygame.font.SysFont("Calibri",20,True)
-        textObj = font.render("%s" %note,True,(255,255,255))
-        self.screen.blit(textObj,(120,60))
-        pygame.display.flip()
-
-    def displayTut(self):
-        if self.animateCount < 50:
-            welcome = "Welcome to Tentacle World..."
-            font = pygame.font.SysFont("Calibri",20,True)
-            textObj = font.render("%s" %welcome,True,(255,255,255))
-            self.screen.blit(textObj,(50,100))
-        else:
-            if 50 <= self.animateCount < 120:
-                self.tutorialStep = 2
-                caption = "The values on cells are their life values."
-                font = pygame.font.SysFont("Calibri",20,True)
-                textObj = font.render("%s" %caption,True,(255,255,255))
-                self.screen.blit(textObj,(50,100))                
-            elif self.animateCount >= 120:
-                if self.tutorialStep == 2: self.tutorialStep += 1
-                self.doTutorial()                      
-            
-        pygame.display.flip()
-
-    def doTutorial(self):
-        font = pygame.font.SysFont("Calibri",18,True)
-        if self.tutorialStep == 3:
-            caption1 = "Now, use your mouse to click your cell(GREEN) with tentacle."
-            caption2 = "DRAG to the other cell. Wait for the tentacle"
-            caption3 = "growth to complete."
-            capList = [caption1,caption2,caption3]
-            cellx,celly = 400,400
-            Lock(cellx,celly).drawLock(self.screen)
-        elif self.tutorialStep == 4:
-            caption1 = "Good. You can now see the signal is being transported."
-            caption2 = "Now, drag-click the mouse and cut the tentacle, and"
-            caption3 = "see what happens."
-            capList = [caption1,caption2,caption3]
-        elif self.tutorialStep == 5:
-            caption1 = "Indeed, cutting the tentacle breaks the tentacle into"
-            caption2 = "two parts.Each part 'collapses' to one of the ends."
-            caption3 = "How much collpase to the target cell is determined "
-            caption4 = "by the location of your cutting. Now, feel free to try"
-            caption5 = "the EMB cell. It has no tentacle. Try move anywhere"
-            caption6 = "you want, then let it collide with the enemy cell."
-            capList = [caption1,caption2,caption3,caption4,caption5,caption6]
-            if self.findTutEMB() != None:
-                cellx,celly = self.findTutEMB()
-                Lock(cellx,celly).drawLock(self.screen)
-        elif self.tutorialStep == 6:
-            caption1 = "Great! Now try to use the needle at the bottom right"
-            caption2 = "to eliminate the enemy left. You can earn a new"
-            caption3 = "needle when you complete Level 4 or above."
-            caption4 = "Finally, press 's' at any time to save your"
-            caption5 = "game progress, and press 'space' to load!"
-            capList = [caption1,caption2,caption3,caption4,caption5]
-        for i in range(len(capList)):
-                text = font.render("%s"%(capList[i]),True,WHITE)
-                self.screen.blit(text,(50,100+25*i))      
-        pygame.display.flip()
-
-    def findTutEMB(self):
-        for cell in self.cellList:
-            if cell.name == "EMB" and cell.color == GREEN:
-                return cell.x,cell.y
-        return None
-        
-    def mlAct(self):
-
-        if(self.adjMat[self.cellStart.index][self.cellEnd.index]==0 and int(np.sum(self.adjMat[self.cellStart.index]))<self.maxLinks):
-            #print("Joining Link");
-            self.mousePressed();
-        elif(self.adjMat[self.cellStart.index][self.cellEnd.index]==1):
-            #print("Breaking Link");
-            self.tryConsiderCut();
-        else:
-            1
-            #print("no action taken")
+    def mlAct(self, cutChain):
+        if (cutChain and (self.adjMat[self.cellStart.index][self.cellEnd.index]==0) and 
+            (int(np.sum(self.adjMat[self.cellStart.index])) < self.maxLinks)):
+            # Creating tentacles if not present and current number of tentacles are less than max
+            self.mousePressed()
+            return
+        if not cutChain and (self.adjMat[self.cellStart.index][self.cellEnd.index]==1):
+            # Destroying current tentacle
+            self.tryConsiderCut()
 
     def mlChooseEvent(self,rand):
-
-        n=self.numCells+0;
+        n=self.numCells
+        cutChain = False
+        if rand > n*(n-1):
+            rand -= n*(n-1)
+            cutChain = True
         row=int((rand-1)/(n-1));
         col=(rand-1)%(n-1);
         if(col>=row):
-            col+=1;
+            col+=1
 
-        return (self.cellList[row], self.cellList[col])
+        return (self.cellList[row], self.cellList[col], cutChain)
 
     def mlGetState(self):
-
-        n=self.numCells;
+        n = self.numCells
         for i in range(n):
             if(self.cellList[i].color==RED):
-                self.mlCurrState[i+n*n]=-1;
-            else:
-                self.mlCurrState[i+n*n]=1;
-            self.mlCurrState[i+n*n+n]=self.cellList[i].value
+                self.mlCurrState[i+n*n] = -self.cellList[i].value
+            else: self.mlCurrState[i+n*n] = self.cellList[i].value
 
         for i in range(n):
             for j in range(n):
-                self.mlCurrState[n*i+j]=self.adjMat[i][j];
+                self.mlCurrState[n*i+j] = self.adjMat[i][j]
 
     def mlGetReward(self):
-
-        n=self.numCells;
-        greenEnergy=0;
-        redEnergy=0;
-        countGreen=0;
-        countRed=0;
-        currentRed=0;
-        currentGreen=0;
-        greenTentacles=0;
-        redTentacles=0;
-        reward=0;
-
-        for i in range(n):
-            for j in range(n):
-                if(self.mlCurrState[n*i+j]==1):
-                    if(self.mlCurrState[i+n*n]==-1):
-                        redTentacles+=1;
-                    else:
-                        greenTentacles+=1;
-
-                if(self.mlPrevState[n*i+j]==1):
-                    if(self.mlPrevState[i+n*n]==-1):
-                        redTentacles-=1;
-                    else:
-                        greenTentacles-=1;
-
-
-        for i in range(n):
-            for j in range(n):
-                if(self.mlCurrState[n*i+j]==1 and self.mlPrevState[n*i+j]==0 and self.mlCurrState[i+n*n]==1):
-                    if(self.mlCurrState[j+n*n]==-1):
-                        reward+=25;
-                    else:
-                        reward+=10;
-                    
-
-        for i in range(n):
-            if(self.mlCurrState[i+n*n]==-1):
-                redEnergy+=self.mlCurrState[i+n*n+n];
-                countRed+=1;
-                currentRed+=1;
-            else:
-                greenEnergy+=self.mlCurrState[i+n*n+n]
-                countGreen+=1;
-                currentGreen+=1
-
-        for i in range(n):
-            if(self.mlPrevState[i+n*n]==-1):
-                redEnergy-=self.mlPrevState[i+n*n+n];
-                countRed-=1;
-            else:
-                greenEnergy-=self.mlPrevState[i+n*n+n]
-                countGreen-=1;
-
-        #return ((countGreen-countRed)*10+(greenEnergy/(currentGreen+1)-redEnergy/(currentRed+1))*5+greenTentacles*10+reward);
         return 0
-
 
     def timerFired(self):
         if not self.isGameOver() and not self.isWin(): # Game running
             self.doTimeThing()
             if((self.animateCount)%(self.mlModuloConst)==0):
 
-                self.mlGetState();
-                reward = self.mlGetReward() - livingReward
-                self.score += reward;
+                self.mlGetState()
+                reward = self.mlGetReward() + livingReward
+                self.score += reward
+                # print("REWARD=",reward,"    SCORE=",self.score)
+
                 mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow, 
-                    reward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), False)
+                    reward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), False, None)
                 # mlAgent.trainModel()
                 self.actionForNow=mlAgent.getAction(np.reshape(self.mlCurrState,[1,mlAgent.stateSize]))
+                # print("ACTION=", self.actionForNow)
 
                 if(self.actionForNow!=0):
-                    (self.cellStart, self.cellEnd) = self.mlChooseEvent(self.actionForNow)
+                    (self.cellStart, self.cellEnd, cutChain) = self.mlChooseEvent(self.actionForNow)
                     if(self.cellStart.color==GREEN):
-                        self.mlAct()
+                        self.mlAct(cutChain)
 
-                self.mlPrevState=self.mlCurrState+0;
+                self.mlPrevState = self.mlCurrState
             #manually manage the event queue
 
             if len(self.lineDrawn) == 3:
@@ -702,31 +270,34 @@ class CellWar(object):
 
             if self.recordPos != None:
                 # first judges if EMB or ATT needs to move.
-
                 do = self.tryMoveCell()
                 if do == False: # means potentially a cut
                     #self.tryConsiderCut()
                     self.recordPos = None
 
         elif not self.isGameOver() and self.isWin(): # Win!
-                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
-                    winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
                 self.score+=winReward
-                print("  WIN    score=",self.score, end="  ")
-                mlAgent.trainModel()
-                mlAgent.updateTargetModel()
+                self.numGames -= 1
+                print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
+                print("  WIN    score=",self.score, end="  \n")
+                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
+                    winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True, self.score);
+                if mlAgent.shouldTrain: mlAgent.trainModel()
                 mlAgent.model.save_weights("model.h5")
-                self.showWin()
+                self.init(4)
+                self.reset()
 
         elif self.isGameOver() and not self.isWin(): # Lose!
-                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
-                    -winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True);
                 self.score-=winReward
-                print("  LOSS   score=",self.score, end="  ")
-                mlAgent.trainModel()
-                mlAgent.updateTargetModel()
+                self.numGames -= 1
+                print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
+                print("  LOSS   score=",self.score, end="  \n")
+                mlAgent.appendSample(np.reshape(self.mlPrevState,[1, mlAgent.stateSize]), self.actionForNow,
+                    -winReward, np.reshape(self.mlCurrState,[1, mlAgent.stateSize]), True, self.score);
+                if mlAgent.shouldTrain: mlAgent.trainModel()
                 mlAgent.model.save_weights("model.h5")
-                self.showGameOver()
+                self.init(4)
+                self.reset()
 
     ######################### END OF TIMERFIRED ##########################            
     ######################### END OF TIMERFIRED ##########################
@@ -744,8 +315,7 @@ class CellWar(object):
                     x0= 0.5*(self.cellStart.x + self.cellEnd.x);
                     y0= 0.5*(self.cellStart.y + self.cellEnd.y);
                     breakInd = self.findBreakPoint(chain,x0,y0)
-                    if(breakInd == None):
-                        continue;
+                    if(breakInd == None): continue
                     chain.shouldBreak = True
                     self.adjMat[self.cellStart.index][self.cellEnd.index]=0;
                     try:
@@ -763,38 +333,6 @@ class CellWar(object):
                 gray = (R+G+B)/3
                 self.background.set_at((x,y),(gray,gray,gray,255))
         self.grayify = True
-            
-    def showGameOver(self):
-        self.clock.tick(self.fps)
-        winImg = pygame.image.load('resources/result4.jpg')
-        self.screen.blit(winImg,(0,self.winImgy))
-        font = pygame.font.SysFont("Courier",60,True)
-        textObj = font.render("%d"%self.levelChosen,True,(255,255,255))
-        self.screen.blit(textObj,(310,300+self.winImgy))
-        if self.winImgy <= -1:
-            self.winImgy += 25
-        else:
-            self.mode = "Game Over" # so no longer run in timerFired
-            self.doGameOver()
-        pygame.display.update()
-
-    def showWin(self):
-        self.clock.tick(self.fps)
-        winImg = pygame.image.load('resources/result3.jpg')
-        self.screen.blit(winImg,(0,self.winImgy))
-        font = pygame.font.SysFont("Courier",60,True)
-        textObj = font.render("%d"%self.levelChosen,True,(255,255,255))
-        self.screen.blit(textObj,(314,295+self.winImgy))
-        if self.winImgy <= -1:
-            self.winImgy += 25
-        else:
-            self.mode = "Win"
-            if self.levelChosen not in self.levelCleared:
-                self.levelCleared.append(self.levelChosen)
-            self.doWin()
-        pygame.display.update()
-
-        
 
     def findBreakPoint(self,chain,x0,y0):
         for i in range(len(chain.chainList)):
@@ -997,8 +535,6 @@ class CellWar(object):
 
                     self.adjMat[self.dealCell.index][cell.index]=1;
 
-                    if self.mode == "Tutorial":
-                        self.tutorialStep = 4
                     if self.dic[self.dealCell] == -1:
                         # newly created key
                         self.dic[self.dealCell] = [chain]
@@ -1036,7 +572,6 @@ class CellWar(object):
                 for chain in self.dic[chainEnd]:
                     if chain.shouldGrow:
                         return
-            self.totalAssist += 1
 
     def noRepeatChain(self,chainEnd,startCell):
         if self.dic[chainEnd] != -1 and chainEnd.color == startCell.color:
@@ -1076,7 +611,6 @@ class CellWar(object):
                         self.shinex,self.shiney = cell.x,cell.y
                         self.playShine(cell.x,cell.y,True)
                         self.cellList.remove(cell)
-                        self.totalMerge += 1
                         target = cell2
                         self.adjustValue(target,subtract,turnColor)
                         cell.value = abs(cell.value)
@@ -1095,8 +629,6 @@ class CellWar(object):
                     if cell.name == "ATT":
                         self.forceMakeCollapse(cell)
                     cell.value = abs(cell.value)
-                    if cell.color == RED:
-                        self.enemyKilled += 1
                 cell.color = color
                 delta = -1
 
@@ -1271,7 +803,6 @@ class CellWar(object):
                     if chainEnd.color == GRAY:
                         chainEnd.value = 10
                     else:
-                        self.enemyKilled += 1
                         self.forceMakeCollapse(chainEnd)
                     chainEnd.color = cell.color
                     chainEnd.value = abs(chainEnd.value)
@@ -1292,7 +823,6 @@ class CellWar(object):
                         chainEnd.value = grayBonus # bonus for gray!
                     else:
                         self.forceMakeCollapse(chainEnd)
-                        self.enemyKilled += 1
                         chainEnd.value = abs(chainEnd.value)
                     chainEnd.color = cell.color                    
             if validLow != 0 and cell.value < self.maximum:
@@ -1341,20 +871,14 @@ class CellWar(object):
     def redrawShapes(self):
         self.traceLine()
         self.drawLock()
-        self.traceTransfer() # trace the transfer through chains
+        self.traceTransfer()
         self.drawChain()
         self.drawLine()
 
         
     def redrawAll(self):
-
         cellImg = self.imageList[0]
         self.screen.blit(self.bgimage,(0,0))
-        needlex,needley,textx,texty,needleFont = 647,643,610,650,25
-        self.screen.blit(self.needleImg,(needlex,needley))
-        font = pygame.font.SysFont("Franklin Gothic Demi",needleFont,False)
-        textObj = font.render("%d x "%self.needleLeft,True,GREEN)
-        self.screen.blit(textObj,(textx,texty))
         self.redrawShapes()
         maxFont = 15
         font = pygame.font.SysFont("Calibri",maxFont,False)
@@ -1370,351 +894,9 @@ class CellWar(object):
                     self.imageList[int(-(self.animateCount%backCycle)/rd - 1)]
                 self.screen.blit(cellImg,(cell.x-adjustx,cell.y-adjusty))
             cell.drawCell(self.screen)
-        if self.needleMode:
-            self.screen.blit(self.mouseFigure,self.getNeedlePos())
         try:self.playShine(self.shinex,self.shiney,True)
         except: pass
         pygame.display.flip()
-        
-        
-    def getNeedlePos(self):
-        (x,y) = pygame.mouse.get_pos()
-        adjustx,adjusty = 53/2,57/2
-        return (x-adjustx,y-adjusty)
-
-    def menuInit(self):
-        # The first thing that runs:
-        while self.animateCount < 1:
-            self.mode = "Loading"
-            self.clock.tick(self.fps)
-            self.animateCount += mlvarAC
-
-        self.animateCount=40
-        self.mode = "Main Menu"
-        # start playing music in the mainMenu
-        self.levelCleared = [0,1]
-        self.menuOption = ["Play","Help","Credit","Achievement"]
-        # this is for background
-        
-        self.levelPage = "1-3"
-        self.mode = "Main Menu"
-        self.menuNumber = 0
-        self.creInitx,self.creInity = 320,100
-        self.achichoice = 0
-        self.gameDisplayDepth = 1 # the depth of game, main menu is 1
-
-    def doWin(self):
-        self.mode = "Win" # shift the self.mode to stop other running functions
-        self.screen.blit(pygame.image.load('resources/result3.jpg'),(0,0))
-        (x,y) = pygame.mouse.get_pos()
-        if 162 <= x <= 244 and 558 <= y <= 631:
-            self.winchoice = 0
-            self.screen.blit(self.winImages[0],(0,0))
-        elif 281 <= x <= 362  and 558 <= y <= 631:
-            self.winchoice = 1
-            self.screen.blit(self.winImages[1],(0,0))
-        elif 394 <= x <= 476 and 558 <= y <= 631:
-            self.winchoice = 2
-            self.screen.blit(self.winImages[2],(0,0))
-        else:
-            self.winchoice = None
-        textPos,fontSize = (314,295+self.winImgy),60
-        font = pygame.font.SysFont("Courier",fontSize,True)
-        textObj = font.render("%d"%self.levelChosen,True,(255,255,255))
-        self.screen.blit(textObj,textPos)
-        if self.levelChosen not in self.levelCleared:
-            self.levelCleared.append(self.levelChosen)
-        pygame.display.update()
-
-    def doGameOver(self):
-        self.mode = "Game Over" # shift the self.mode
-        self.screen.blit(pygame.image.load('resources/result4.jpg'),(0,0))
-        (x,y) = pygame.mouse.get_pos()
-        if 225 <= x <= 305 and 558 <= y <= 631:
-            self.gameOverchoice = 0
-            self.screen.blit(self.gameOverImages[0],(0,0))
-        elif 357 <= x <= 436 and 558 <= y <= 631:
-            self.gameOverchoice = 1
-            self.screen.blit(self.gameOverImages[1],(0,0))
-        else:
-            self.gameOverchoice = None
-        textPos,fontSize = (314,295+self.winImgy),60
-        font = pygame.font.SysFont("Courier",fontSize,True)
-        textObj = font.render("%d"%self.levelChosen,True,WHITE)
-        self.screen.blit(textObj,textPos)
-        pygame.display.update()
-                        
-       
-    def chooseLevel(self): # of depth 3
-        pool = self.levelCleared + [self.levelCleared[-1]+1]
-        if self.levelPage == "1-3":
-            self.screen.blit(pygame.image.load('resources/level1-3.jpg'),(0,0))
-            self.doLevel1_3()
-        elif self.levelPage == "4-6":
-            if len(pool) > 4: #[0,1,2,3,4]
-                self.screen.blit(pygame.image.load('resources/level4-6available.jpg'),(0,0))
-                self.doLevel4_6()
-            else:
-                self.screen.blit(pygame.image.load('resources/level4-6unavailable.jpg'),(0,0))
-                self.undoLevel4_6()
-        elif self.levelPage == "7":
-            if len(pool) == 8: #[0...7]
-                self.screen.blit(pygame.image.load('resources/level7available.jpg'),(0,0))
-                self.doLevel7()
-            else:
-                self.screen.blit(pygame.image.load('resources/level7unavailable.jpg'),(0,0))
-                self.undoLevel7()
-        pygame.display.update()
-
-    def doLevel1_3(self):
-        self.mode = "Choose Level"
-        (x,y) = pygame.mouse.get_pos()
-        if 252 <= x <= 415 and 243 <= y <= 397:
-            self.screen.blit(pygame.image.load('resources/level1-3sun.jpg'),(0,0))
-
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            self.screen.blit(pygame.image.load('resources/level1-3button.jpg'),(0,0))
-
-        elif 533 <= x <= 596 and 279 <= y <= 351:
-            self.screen.blit(pygame.image.load('resources/level1-3arrow.jpg'),(0,0))
-
-        pygame.display.update()
-
-    def finalLevel1_3(self):
-        if len(self.levelCleared) == 1: #[0],initially
-            self.screen.blit(pygame.image.load("resources/level123(1).jpg"),(0,0))
-        elif len(self.levelCleared) == 2: #[0,1]
-            self.screen.blit(pygame.image.load("resources/level123(2).jpg"),(0,0))
-        else:
-            self.screen.blit(pygame.image.load("resources/level123.jpg"),(0,0))
-        (text,tempLevelCleared,font2) = self.enterInterface()
-        warning,maxLevel = (220,470),3
-        # Unavailable level display
-        if len(text) == 1 and ((eval(text) not in tempLevelCleared)\
-           or eval(text) > maxLevel):
-            textObj2 = font2.render("Unavailable Level",True,(2,2,2))
-            self.screen.blit(textObj2,warning)
-        pygame.display.update()
-
-    def enterInterface(self):
-        font1 = pygame.font.SysFont("Berlin Sans FB",36,True)
-        font2 = pygame.font.SysFont("Berlin Sans FB",28,True)
-        try:text = self.levelText
-        except: text = ""
-        textPos,warning = (110,420),(220,470)
-        textObj1 = font1.render("Enter the level(Keyboard):  %s"%text,\
-                                False,(2,2,2))
-        self.screen.blit(textObj1,textPos)
-        tempLevelCleared = self.levelCleared + [self.levelCleared[-1]+1]
-        pygame.display.update()
-        return (text,tempLevelCleared,font2)
-                   
-
-    def doLevel4_6(self):
-        self.mode = "Choose Level"
-        (x,y) = pygame.mouse.get_pos()
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.screen.blit(pygame.image.load('resources/level4-6available1.jpg'),(0,0))
-
-        elif 252 <= x <= 415 and 243 <= y <= 397:
-            # choose one of 4-6
-            self.screen.blit(pygame.image.load('resources/level4-6available3.jpg'),(0,0))
-
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.screen.blit(pygame.image.load('resources/level4-6available2.jpg'),(0,0))
-
-        elif 533 <= x <= 596 and 279 <= y <= 351:
-            self.screen.blit(pygame.image.load('resources/level4-6available4.jpg'),(0,0))
-
-        pygame.display.update()
-
-    def doLevel7(self):
-        self.mode = "Choose Level"
-        (x,y) = pygame.mouse.get_pos()
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.screen.blit(pygame.image.load('resources/level7available1.jpg'),(0,0))
-        elif 252 <= x <= 415 and 243 <= y <= 397:
-            # choose one of 4-6
-            self.screen.blit(pygame.image.load('resources/level7available3.jpg'),(0,0))
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.screen.blit(pygame.image.load('resources/level7available2.jpg'),(0,0))
-        pygame.display.update()
-
-    def actLevel4_6(self,x,y):
-        # this is called when level 4 to 6 is available, in the main level page
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.levelPage = "1-3"
-            self.chooseLevel()
-        elif 252 <= x <= 415 and 243 <= y <= 397:
-            # choose one of 4-6
-            self.mode = "Choose Final Level"
-            self.finalLevel4_6()
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.doMainMenu()
-        elif 533 <= x <= 596 and 279 <= y <= 351:
-            self.levelPage = "7"
-
-    def unactLevel4_6(self,x,y):
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.levelPage = "1-3"
-            self.chooseLevel()
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.doMainMenu()
-
-    def finalLevel4_6(self):
-        if len(self.levelCleared) == 4: #[0,1,2,3]
-            self.screen.blit(pygame.image.load("resources/level456(1).jpg"),(0,0))
-        elif len(self.levelCleared) == 5: #[0,1,2,3,4]
-            self.screen.blit(pygame.image.load("resources/level456(2).jpg"),(0,0))
-        else:
-            self.screen.blit(pygame.image.load("resources/level456.jpg"),(0,0))
-        (text,tempLevelCleared,font2) = self.enterInterface()
-        warning,limit1,limit2 = (220,470),6,4
-        if len(text) == 1 and ((eval(text) not in tempLevelCleared)\
-           or eval(text) > limit1 or eval(text) < limit2):
-            textObj2 = font2.render("Unavailable Level",True,(2,2,2))
-            self.screen.blit(textObj2,warning)
-        pygame.display.update()
-
-    def undoLevel4_6(self):
-        self.mode = "Choose Level"
-        (x,y) = pygame.mouse.get_pos()
-        if 87 <= x <= 154 and 280 <= y <= 352:
-            image = pygame.image.load('resources/level4-6unavailable1.jpg')
-            self.screen.blit(image,(0,0))
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            image = pygame.image.load('resources/level4-6unavailable2.jpg')
-            self.screen.blit(image,(0,0))
-        pygame.display.update()
-
-    def undoLevel7(self):
-        self.mode = "Choose Level"
-        (x,y) = pygame.mouse.get_pos()
-        if 87 <= x <= 154 and 280 <= y <= 352:
-            image = pygame.image.load('resources/level7unavailable1.jpg')
-            self.screen.blit(image,(0,0))
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            image = pygame.image.load('resources/level7unavailable2.jpg')
-            self.screen.blit(image,(0,0))
-        pygame.display.update()
-
-    
-    def actLevel7(self,x,y):
-        # this is called when level 7 is available, in the main level page
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.levelPage = "4-6"
-            self.chooseLevel()
-        elif 252 <= x <= 415 and 243 <= y <= 397:
-            self.init(7)
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.doMainMenu()
-
-    def unactLevel7(self,x,y):
-        if 87 <= x <= 154 and 279 <= y <= 355:
-            self.levelPage = "4-6"
-            self.chooseLevel()
-        elif 300 <= x <= 382 and 595 <= y <= 672:
-            # press the button
-            self.doMainMenu()
-            
-        
-
-    def runMenuOption(self,option): # choosing at depth 1
-        if option == "Play":
-            # Should choose level first
-            self.doBackground()
-            self.gameDisplayDepth += 1
-        elif option == "Credit":
-            self.runCredit()
-        elif option == "Achievement":
-            self.displayAchi()
-
-    def runCredit(self):
-        self.mode = "Credit"
-        interface = pygame.image.load('resources/GrayImage2.jpg')
-        self.screen.blit(interface,(0,0))
-        if self.animateCount % 2 == 0:
-            self.creInity -= 1
-        pygame.display.update()
-            
-
-    def displayAchi(self):
-        self.mode = "Achievement"
-        if self.achichoice == 0:
-            self.doAchievement()
-        elif self.achichoice == 1:
-            self.doAchievementPage2()
-        
-
-    def doAchievement(self):
-        self.achievement = [self.gamesPlayed,self.loses,self.enemyKilled,\
-                     self.needleLeft,self.totalMerge,self.totalAssist]
-        self.screen.blit(pygame.image.load("resources/Achievement1.jpg"),(0,0))
-        gamesPlayed = self.achievement[0]
-        loses,enemyKilled = self.achievement[1],self.achievement[2]
-        needleLeft,totalMerge = self.achievement[3],self.achievement[4]
-        totalAssist = self.achievement[5]
-        levelCompleted = len(self.levelCleared)-1
-        font = pygame.font.SysFont("Arial",20,True)
-        textObj1 = font.render("%d" %gamesPlayed,True,WARMYELLOW)
-        textObj2 = font.render("%d" %levelCompleted,True,WARMYELLOW)
-        textObj3 = font.render("%d" %loses,True,WARMYELLOW)
-        textObj4 = font.render("%d" %enemyKilled,True,WARMYELLOW)
-        textObj5 = font.render("x %d" %needleLeft,True,WARMYELLOW)
-        (pos1,pos2,pos3,pos4,pos5) = self.getTextPos()
-        self.screen.blit(textObj1,pos1)
-        self.screen.blit(textObj2,pos2)
-        self.screen.blit(textObj3,pos3)
-        self.screen.blit(textObj4,pos4)
-        self.screen.blit(textObj5,pos5)
-        pygame.display.update()
-
-    def getTextPos(self):
-        # the positions of the texts on the Achievement Page
-        return ((503,149),(503,205),(503,264),(503,323),(503,486))
-
-    def doAchievementPage2(self):
-        totalMerge = self.totalMerge
-        totalAssist = self.totalAssist
-        enemyKilled = self.enemyKilled
-        title = []
-        mergeNum,assistNum,killNum = 10,5,30
-        if totalMerge >= mergeNum:title.append(1)
-        if totalAssist >= assistNum: title.append(2)
-        if enemyKilled >= killNum: title.append(3)
-        titleCompleted = self.findTitleImg(title)
-        self.screen.blit(titleCompleted,(0,0))
-        pygame.display.update()
-
-    def findTitleImg(self,title):
-        titleImageList = [pygame.image.load("Achievement2(0).jpg"),\
-                          pygame.image.load("Achievement2(1).jpg"),\
-                          pygame.image.load("Achievement2(2).jpg"),\
-                          pygame.image.load("Achievement2(3).jpg"),\
-                          pygame.image.load("Achievement2(12).jpg"),\
-                          pygame.image.load("Achievement2(13).jpg"),\
-                          pygame.image.load("Achievement2(23).jpg"),\
-                          pygame.image.load("Achievement2.jpg")]
-        if title == []:
-            return titleImageList[0]
-        elif len(title) == 1:
-            return titleImageList[title[0]] # 1,2 or 3
-        elif len(title) == 2:
-            return titleImageList[sum(title)+1] # [1,2],[1,3] or [2,3]
-        else:
-            return titleImageList[-1]
-        
-                          
-  
-    def runTutSetup(self):
-        self.tutorialStep = 2 # welcome!
 
     def loadImageList(self):
         self.imageList = [pygame.image.load('resources/GreenCell4.png'),\
@@ -1724,7 +906,6 @@ class CellWar(object):
                      pygame.image.load('resources/GreenCell5.png'),\
                      pygame.image.load('resources/GreenCell7.png'),\
                      pygame.image.load('resources/GreenCell3.png'),]
-        self.needleImg,self.needleMode = pygame.image.load('resources/needle.png'),False
 
     def initImgAndMusic(self):
         self.winImgy = -700
@@ -1734,8 +915,6 @@ class CellWar(object):
 
     def init(self,level): # level as a number
         self.mode = "Running"
-        if self.mode == "Tutorial":
-            self.runTutSetup()
         self.initImgAndMusic()
         self.potential = None # potential target pointing at
         self.lineDrawn,self.grayify = [],False # should we make bg gray?
@@ -1775,11 +954,6 @@ class CellWar(object):
         self.bgimage = pygame.image.load('resources/StoneAge2.jpg')
         self.init(4)
         while (self.numGames > 0):
-            if self.isGameOver():
-                self.numGames -= 1
-                print("EPSILON={0:.5f}   GAME NUMBER={1:3d}".format(mlAgent.epsilon,self.numGames),end=' ');
-                self.init(4)
-                self.reset()
             self.timerFired()
         pygame.quit()
                 
@@ -2010,58 +1184,6 @@ class Embracer(Cell):
             self.sprite.rect.y = self.y
 
 
-    ##################
-    # Overriding
-    ##################
-    '''
-    def findEnemiesWithinDistance(self,allCellList):
-        """ return self.grayList and self.allOtherList as a tuple """
-        # for AI use. 
-        self.enemiesList = []
-        grayList = [] # higher priority should be put in front
-        enemyAvg = 0
-        defaultReturn = 100
-        for cell in allCellList:
-            if cell.color != self.color:
-                valueNeed = 2
-                if cell.color == GRAY:
-                    # ATTENTION! No longer cell.name for index 1
-                    grayList.append((cell.value,cell.color,cell))
-                elif cell.name == "ATT":
-                    # the heuristic here is that estimated distance
-                    # to travel plus target's value
-                    enemyAvg += cell.value
-                    self.enemiesList.append((cell.value+valueNeed,\
-                                                 cell.color,cell))
-        self.grayList = list(grayList) # just in case, so that no aliasing
-        self.allOtherList = list(reversed(sorted(grayList, key=itemgetter(0))))+sorted(self.enemiesList, key=itemgetter(0))
-        if len(self.enemiesList) != 0:
-            return float(enemyAvg)/len(self.enemiesList)
-        else:
-            return defaultReturn # force the cell to be in defense mode
-
-    
-    def think(self,environment,animateCount):
-        # the thinking process refers to the AI
-        enemyAvg = self.findEnemiesWithinDistance(environment)
-        allyAvg = self.findAllies(environment)
-        remainAfter = 3
-        count,highKey = animateCount,10
-        # the bound is lower for EMB
-        emergency = self.findEmergencyCell()
-        #print allyAvg,enemyAvg
-        if self.value < highKey or count < 240:
-            # lose 6 value points per second
-            self.state = "Defense"
-        elif self.value >= highKey:
-            if emergency != None:
-                self.state == "Assist"
-            elif self.value+remainAfter >= enemyAvg:
-                self.state = "Attack"
-            else:
-                self.state = "Defense"
-    '''
-
     def update(self,environment,animateCount):
         # update every aspect: camp, current mode, etc.
         # ONLY ENEMY CELL NEEDS TO UPDATE.
@@ -2079,9 +1201,9 @@ class Level_8(object):
 class Level_4(object):
     def __init__(self):
 
-        self.c1 = Cell(350,250,60,GREEN,0)
-        self.c2 = Cell(550,250,40,RED,1)
-        self.c3 = Cell(150,150,30,RED,2)
+        self.c1 = Cell(350,250,60,RED,0)
+        self.c2 = Cell(550,250,30,GREEN,1)
+        self.c3 = Cell(150,150,40,GREEN,2)
         self.cellList = [self.c1,self.c2,self.c3]
         self.maximum = maxEnergy
 
@@ -2297,17 +1419,6 @@ class Chain(object):
     def drawChain(self,surface):
         length = self.lineHalfLength
         angle = self.direction
-        
-        '''
-        i=self.chainList[0];
-        f=self.chainList[len(self.chainList)-1];
-        ix=int(round(i[0]));
-        iy=int(round(i[1]));
-        fx=int(round(f[0]));
-        fy=int(round(f[1]));
-
-        pygame.draw.line(surface,self.color,(ix,iy),(fx,fy),2);
-        '''
         for i in range(len(self.chainList)):
 
             dot = self.chainList[i]
@@ -2328,12 +1439,6 @@ class Chain(object):
             lineEndy = int(round(doty-length*math.cos(math.pi-angle)))           
             pygame.draw.line(surface,color,(linestx,linesty),\
                              (lineEndx,lineEndy),2)
-            
-
-    def __str__(self):
-        return """Chain starting from (%.1f,%.1f) and ending at (%.1f,%.1f),
-        with angle %.1f"""\
-               %(self.startx,self.starty,self.endx,self.endy,self.direction)
 
 def dist(x1,y1,x2,y2,r):
     return ((x1-x2)**2+(y1-y2)**2)**(0.5) <= r+3
@@ -2341,9 +1446,3 @@ def dist(x1,y1,x2,y2,r):
 my_CellWar = CellWar()
 mlAgent = ml2k17(my_CellWar.numCells);
 my_CellWar.run()
-
-############################
-# Test function
-############################
-
-testWar = CellWar()
